@@ -179,6 +179,19 @@ test('unknown status falls back to a generic reason and appends server detail', 
   );
 });
 
+test('unknown status stays visible while cached vessels still draw', () => {
+  assert.equal(
+    deriveAisFeedError({ status: 'weird-state', error: 'something specific' }, 12),
+    'feed unavailable (something specific)',
+  );
+  const snapshot = classifyAisFeedSnapshot({
+    status: 'weird-state',
+    error: 'something specific',
+    rows: [{ mmsi: '1', lat: 1, lon: 1 }],
+  });
+  assert.match(snapshot.error, /feed unavailable/);
+});
+
 test('missing status treated as healthy (older/other payload shapes) (null)', () => {
   assert.equal(deriveAisFeedError({ error: 'ignored' }, 0), null);
   assert.equal(deriveAisFeedError(null, 0), null);
