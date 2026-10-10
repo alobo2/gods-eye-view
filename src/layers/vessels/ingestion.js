@@ -48,6 +48,7 @@ export function createIngestion({
         complete: snapshot.complete,
         rawRowCount: snapshot.rawRowCount,
         reason: snapshot.reason,
+        error: snapshot.transportError ?? null,
         status: snapshot.transportStatus,
         lastMessageAt: snapshot.lastMessageAt,
         nextAttemptAt: snapshot.nextAttemptAt,

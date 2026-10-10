@@ -33,6 +33,7 @@ import { registerEntityContext, selectEntityContext } from './contextStore.js';
 import { WORLD_FOCUS_REQUEST_EVENT } from '../worldFocus.js';
 import { ensureGeoidReady, geoidHeight } from './geoid.js';
 import { registerPickOwner, unregisterPickOwner } from './pickRegistry.js';
+import { vesselSnapshot } from '../sources/live/vessels.js';
 import { applyVesselOverlayPolicy } from './vesselLabels.js';
 import { layerFeedState } from './manager.js';
 
@@ -195,6 +196,52 @@ test('unknown status stays visible while cached vessels still draw', () => {
 test('missing status treated as healthy (older/other payload shapes) (null)', () => {
   assert.equal(deriveAisFeedError({ error: 'ignored' }, 0), null);
   assert.equal(deriveAisFeedError(null, 0), null);
+});
+
+test('status-less server error stays visible while cached vessels still draw', () => {
+  assert.equal(
+    deriveAisFeedError({ error: 'feed warming cache only' }, 12),
+    'feed warming cache only',
+  );
+  const snapshot = classifyAisFeedSnapshot({
+    error: 'feed warming cache only',
+    rows: [{ mmsi: '1', lat: 1, lon: 1 }],
+  });
+  assert.equal(snapshot.error, 'feed warming cache only');
+});
+
+test('vesselSnapshot carries transportError through the live source seam', () => {
+  const snap = vesselSnapshot({
+    rows: [{ mmsi: '123456789', lat: 1, lon: 2 }],
+    status: 'stale',
+    error: '  quiet upstream  ',
+  });
+  assert.equal(snap.transportError, 'quiet upstream');
+});
+
+test('ingestion forwards transportError into feed classification', () => {
+  const record = { mmsi: '123456789', lat: 51.9, lon: 4.0 };
+  _setVesselStateForTest({
+    viewer: {},
+    records: [record],
+    loaded: true,
+    count: 1,
+  });
+  try {
+    _applyAisFeedSnapshotForTest(
+      {},
+      {
+        rows: [record],
+        error: 'feed warming cache only',
+        complete: true,
+      },
+    );
+    const feed = _getVesselFeedStateForTest();
+    assert.equal(feed.error, 'feed warming cache only');
+    assert.equal(feed.count, 1);
+  } finally {
+    _setVesselStateForTest({ enabled: false });
+  }
 });
 
 // --- watchdog statuses -----------------------------------------------------

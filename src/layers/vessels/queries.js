@@ -92,7 +92,12 @@ export function createQueries({
       acceptedRowCount > 0 &&
       (!status || AIS_HEALTHY_STATUSES.has(status))
     ) {
-      return null;
+      const orphanDetail =
+        !status &&
+        typeof payload?.error === 'string' &&
+        payload.error.trim();
+      if (!orphanDetail) return null;
+      return orphanDetail;
     }
     if (AIS_HEALTHY_STATUSES.has(status)) {
       return payload?.lastMessageAt
