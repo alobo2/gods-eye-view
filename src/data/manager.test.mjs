@@ -1829,6 +1829,10 @@ test('layer feed states distinguish unavailable, fallback, stale, and degraded c
     lastUpdate: 1,
   }), 'nominal', 'an explicitly primary adsb.lol feed is not a fallback');
   assert.equal(layerFeedState({ stale: true, count: 0, lastUpdate: 1 }), 'stale');
+  assert.equal(
+    layerFeedState({ partial: true, count: 5, lastUpdate: 1, stale: false }),
+    'partial',
+  );
   assert.equal(layerFeedState({ error: 'partial group failure', count: 50, lastUpdate: 1 }), 'degraded');
   assert.equal(layerFeedState({ loading: true }), 'loading');
   assert.equal(layerFeedState({ count: 5, lastUpdate: 1 }), 'nominal');
