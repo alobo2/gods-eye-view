@@ -235,6 +235,16 @@ test('AIS HTTP failures carry transport metadata from the error payload', async 
   });
 });
 
+test('AIS HTTP failures without a status field default transport to error', async () => {
+  const source = createAisStreamSource({
+    fetchImpl: async () => response({ rows: [] }, {}, 502),
+  });
+  await assert.rejects(source.getSnapshot(), (error) => {
+    assert.equal(error.aisTransportStatus, 'error');
+    return true;
+  });
+});
+
 test('AIS reports limited received coverage and keeps connection state separate from positions', async () => {
   const source = createAisStreamSource({
     origin: () => 'http://example.test',

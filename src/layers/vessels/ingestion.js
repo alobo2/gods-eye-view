@@ -65,9 +65,10 @@ export function createIngestion({
         error?.name !== 'AbortError'
       ) {
         markUnavailable(error?.message || 'AIS live load failed');
-        if (typeof error?.aisTransportStatus === 'string') {
-          feed.transportStatus = error.aisTransportStatus;
-        }
+        feed.transportStatus =
+          typeof error?.aisTransportStatus === 'string'
+            ? error.aisTransportStatus
+            : 'error';
         if (Number.isFinite(error?.aisNextAttemptAt)) {
           feed.nextAttemptAt = error.aisNextAttemptAt;
         }
