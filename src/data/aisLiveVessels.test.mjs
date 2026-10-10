@@ -544,6 +544,45 @@ function jsonResponse(payload) {
   return { ok: true, status: 200, json: async () => payload };
 }
 
+test('HTTP rejection replaces stale transport status from the last live poll', async () => {
+  const hadWindow = Object.hasOwn(globalThis, 'window');
+  const priorWindow = globalThis.window;
+  const priorFetch = globalThis.fetch;
+  const priorWarn = console.warn;
+  const record = makeRecord();
+  globalThis.window = { location: { origin: 'http://localhost:4173' } };
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 503,
+    json: async () => ({
+      status: 'missing-key',
+      error: 'AISSTREAM_API_KEY is not set',
+    }),
+  });
+  console.warn = () => {};
+  _setVesselStateForTest({
+    viewer: {},
+    records: [record],
+    loaded: true,
+    lastUpdate: 500,
+    transportStatus: 'live',
+    count: 1,
+  });
+  try {
+    await _loadLivePositionsForTest({});
+    const feed = _getVesselFeedStateForTest();
+    assert.equal(feed.count, 1);
+    assert.equal(feed.transportStatus, 'missing-key');
+    assert.equal(feed.error, 'AISSTREAM_API_KEY not set');
+  } finally {
+    globalThis.fetch = priorFetch;
+    console.warn = priorWarn;
+    if (hadWindow) globalThis.window = priorWindow;
+    else delete globalThis.window;
+    _setVesselStateForTest({ enabled: false });
+  }
+});
+
 test('HTTP rejection ends first-connect grace without waiting for its deadline', async () => {
   const hadWindow = Object.hasOwn(globalThis, 'window');
   const priorWindow = globalThis.window;

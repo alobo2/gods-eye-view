@@ -65,6 +65,12 @@ export function createIngestion({
         error?.name !== 'AbortError'
       ) {
         markUnavailable(error?.message || 'AIS live load failed');
+        if (typeof error?.aisTransportStatus === 'string') {
+          feed.transportStatus = error.aisTransportStatus;
+        }
+        if (Number.isFinite(error?.aisNextAttemptAt)) {
+          feed.nextAttemptAt = error.aisNextAttemptAt;
+        }
         console.warn('[Data:ais-live-vessels]', feed.error, error);
       }
     } finally {
