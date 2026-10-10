@@ -168,6 +168,18 @@ test('B8 server probe skips idle/error/closed with cached rows as honest degrada
   }
 });
 
+test('B8 server probe skips status-less error payloads with cached rows', () => {
+  const v = classifyAisFeedB8({
+    ok: true,
+    status: undefined,
+    rows: 12,
+    json: { error: 'feed warming cache only' },
+  });
+  assert.equal(v.status, SKIP);
+  assert.equal(v.tag, 'ENV');
+  assert.match(v.detail, /status-less degradation/i);
+});
+
 test('C8 keyed vessels treat idle/connecting with cached rows as degraded when surfaced', () => {
   for (const transport of ['idle', 'connecting', 'error', 'closed', 'missing-key', 'unsupported']) {
     const v = classifyAisVesselC8Keyed({
@@ -200,6 +212,29 @@ test('C8 keyed vessels still fail bogus transport labels with cached rows', () =
   });
   assert.equal(v.status, FAIL);
   assert.match(v.detail, /neither live nor a recognised degraded state/i);
+});
+
+test('C8 keyed vessels skip status-less transport when error and chip are honest', () => {
+  const v = classifyAisVesselC8Keyed({
+    transportStatus: null,
+    count: 8,
+    chipText: 'DEGRADED · AISStream · feed warming cache only',
+    error: 'feed warming cache only',
+  });
+  assert.equal(v.status, SKIP);
+  assert.equal(v.tag, 'ENV');
+  assert.match(v.detail, /status-less degradation/i);
+});
+
+test('C8 keyed vessels fail status-less transport when the chip still reads ON', () => {
+  const v = classifyAisVesselC8Keyed({
+    transportStatus: null,
+    count: 8,
+    chipText: 'ON',
+    error: 'feed warming cache only',
+  });
+  assert.equal(v.status, FAIL);
+  assert.match(v.detail, /status-less degraded feed/i);
 });
 
 test('a traffic result that landed empty keeps failing', () => {

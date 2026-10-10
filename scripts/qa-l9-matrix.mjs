@@ -306,6 +306,12 @@ function classifyAisVesselC8Keyed(input) {
       ? skip(`feed is ${transport}${count > 0 ? ` with ${count} CACHED vessels` : ''} and the UI says so (chip="${chipText}", error="${String(error || '').slice(0, 60)}", retryInSec=${retryInSec}) — honest degradation, not a live feed`, 'ENV')
       : fail(`feed is ${transport} with ${count} vessels but the chip reads "${chipText}" — a degraded feed that presents as healthy is exactly the invisible outage this check exists for`);
   }
+  if (count > 0 && !transport && error) {
+    const expected = /STALE|DEGRADED/i;
+    return expected.test(chipText)
+      ? skip(`feed has no transport status with ${count} CACHED vessels and the UI says so (chip="${chipText}", error="${String(error).slice(0, 60)}") — status-less degradation, not a live feed`, 'ENV')
+      : fail(`feed has no transport status with ${count} vessels but the chip reads "${chipText}" — a status-less degraded feed that presents as healthy is exactly the invisible outage this check exists for`);
+  }
   if (count > 0) {
     return fail(`${count} vessels with transport="${transport}" — neither live nor a recognised degraded state, so this cannot be called a live feed (chip="${chipText}")`);
   }
@@ -342,6 +348,16 @@ function classifyAisFeedB8({ ok, status, rows, httpStatus = 0, json = {} }) {
   if (status && AIS_C8_DEGRADED_TRANSPORTS.has(status)) {
     return skip(
       `feed is ${status}${rows > 0 ? ` while still serving ${rows} CACHED rows` : ''} (attempt=${json.reconnectAttempt ?? 'n/a'}, nextAttemptAt=${json.nextAttemptAt ?? 'n/a'}, silentFor=${json.silentForMs ?? 'n/a'}ms) — surfaced honestly, but this is not a live feed`,
+      'ENV',
+    );
+  }
+  const payloadError =
+    typeof json.error === 'string' && json.error.trim()
+      ? json.error.trim()
+      : null;
+  if (!status && rows > 0 && payloadError) {
+    return skip(
+      `feed has no status while still serving ${rows} CACHED rows (error="${payloadError.slice(0, 60)}") — status-less degradation, not a live feed`,
       'ENV',
     );
   }
