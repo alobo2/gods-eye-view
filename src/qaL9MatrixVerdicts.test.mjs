@@ -11,8 +11,10 @@ import {
   normalizeVerdict, classifyNoScoreboard, readResultLine, readCockpit,
   readFloorVerdict, keyGuard, applyKnownConditions, requiredCreditFor, satisfiesEngines,
   isCalibratedAllocationRuntime, trafficFlowInconclusive, classifyAisVesselC8Keyed,
+  classifyAisFeedB8, AIS_C8_DEGRADED_TRANSPORTS,
   CREDIT_EXPECTATIONS, CREDIT_EXEMPT_LAYERS,
 } from '../scripts/qa-l9-matrix.mjs';
+import { AIS_DEGRADED_STATUSES } from './layers/vessels/policy.js';
 
 const run = (over = {}) => ({ code: 0, out: '', err: '', timedOut: false, ...over });
 
@@ -146,8 +148,28 @@ test('traffic is inconclusive only when the flow fetch never landed', () => {
     'a live loading label is the same evidence as the loading flag');
 });
 
+test('B8/C8 degraded transports track vessel policy minus auth-failed', () => {
+  assert.equal(AIS_C8_DEGRADED_TRANSPORTS.size, AIS_DEGRADED_STATUSES.size - 1);
+  for (const status of AIS_DEGRADED_STATUSES) {
+    if (status === 'auth-failed') {
+      assert.equal(AIS_C8_DEGRADED_TRANSPORTS.has(status), false);
+      continue;
+    }
+    assert.equal(AIS_C8_DEGRADED_TRANSPORTS.has(status), true, status);
+  }
+});
+
+test('B8 server probe skips idle/error/closed with cached rows as honest degradation', () => {
+  for (const status of ['idle', 'error', 'closed', 'unsupported', 'missing-key']) {
+    const v = classifyAisFeedB8({ ok: true, status, rows: 40, json: { silentForMs: 1200 } });
+    assert.equal(v.status, SKIP, status);
+    assert.equal(v.tag, 'ENV');
+    assert.match(v.detail, /CACHED rows|not a live feed/);
+  }
+});
+
 test('C8 keyed vessels treat idle/connecting with cached rows as degraded when surfaced', () => {
-  for (const transport of ['idle', 'connecting', 'error', 'closed', 'missing-key']) {
+  for (const transport of ['idle', 'connecting', 'error', 'closed', 'missing-key', 'unsupported']) {
     const v = classifyAisVesselC8Keyed({
       transportStatus: transport,
       count: 120,
