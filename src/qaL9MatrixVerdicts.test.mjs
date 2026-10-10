@@ -10,7 +10,7 @@ import {
   PASS, PASS_SKIPS, FAIL, CRASH, SKIP, OUTCOMES,
   normalizeVerdict, classifyNoScoreboard, readResultLine, readCockpit,
   readFloorVerdict, keyGuard, applyKnownConditions, requiredCreditFor, satisfiesEngines,
-  isCalibratedAllocationRuntime, trafficFlowInconclusive,
+  isCalibratedAllocationRuntime, trafficFlowInconclusive, classifyAisVesselC8Keyed,
   CREDIT_EXPECTATIONS, CREDIT_EXEMPT_LAYERS,
 } from '../scripts/qa-l9-matrix.mjs';
 
@@ -144,6 +144,40 @@ test('traffic is inconclusive only when the flow fetch never landed', () => {
   assert.equal(trafficFlowInconclusive({ mode: 'live', tilesFetched: 0, loading: true, count: 900 }), true);
   assert.equal(trafficFlowInconclusive({ mode: 'live', tilesFetched: 0, loadingLabel: 'SYNCING…' }), true,
     'a live loading label is the same evidence as the loading flag');
+});
+
+test('C8 keyed vessels treat idle/connecting with cached rows as degraded when surfaced', () => {
+  for (const transport of ['idle', 'connecting', 'error', 'closed', 'missing-key']) {
+    const v = classifyAisVesselC8Keyed({
+      transportStatus: transport,
+      count: 120,
+      chipText: 'DEGRADED · AISStream · feed idle',
+      error: 'feed idle',
+    });
+    assert.equal(v.status, SKIP, transport);
+    assert.equal(v.tag, 'ENV');
+  }
+});
+
+test('C8 keyed vessels fail unrecognized transport with cached rows', () => {
+  const v = classifyAisVesselC8Keyed({
+    transportStatus: 'idle',
+    count: 50,
+    chipText: 'ON',
+    error: null,
+  });
+  assert.equal(v.status, FAIL);
+  assert.match(v.detail, /invisible outage/i);
+});
+
+test('C8 keyed vessels still fail bogus transport labels with cached rows', () => {
+  const v = classifyAisVesselC8Keyed({
+    transportStatus: 'weird-new-status',
+    count: 3,
+    chipText: 'ON',
+  });
+  assert.equal(v.status, FAIL);
+  assert.match(v.detail, /neither live nor a recognised degraded state/i);
 });
 
 test('a traffic result that landed empty keeps failing', () => {

@@ -86,7 +86,7 @@ export function createQueries({
     if (status && AIS_DEGRADED_STATUSES.has(status)) {
       return describeDegradedAisFeed(status, payload);
     }
-    if (acceptedRowCount > 0) return null; // accepted rows may be stale while reconnecting, but remain usable
+    if (acceptedRowCount > 0) return null; // healthy transport only; degraded statuses return above
     if (AIS_HEALTHY_STATUSES.has(status)) {
       return payload?.lastMessageAt
         ? 'awaiting usable AIS positions…'
