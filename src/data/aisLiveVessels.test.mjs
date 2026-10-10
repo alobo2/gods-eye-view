@@ -84,14 +84,14 @@ test('raw rows that all fail normalization do not satisfy AIS product health', (
   assert.equal(snapshot.error, 'awaiting usable AIS positions…');
 });
 
-test('accepted cached rows remain usable while transport reconnects', () => {
+test('accepted cached rows remain drawable while transport is still connecting', () => {
   const snapshot = classifyAisFeedSnapshot({
     status: 'connecting',
     refreshing: true,
     rows: [{ mmsi: 'cached', lat: 29.7, lon: -95.1 }],
   });
   assert.equal(snapshot.acceptedRowCount, 1);
-  assert.equal(snapshot.error, null);
+  assert.equal(snapshot.error, 'connecting to feed…');
 });
 
 test('missing key with no rows surfaces a clean reason', () => {
@@ -151,9 +151,11 @@ test('closed feed stays visible while cached vessels remain on screen', () => {
   assert.equal(deriveAisFeedError({ status: 'closed', error: null }, 12), 'feed disconnected');
 });
 
-test('non-open status but rows still flowing is treated as stale, not down (null)', () => {
-  // e.g. reconnecting/refreshing while a cached buffer still serves rows.
-  assert.equal(deriveAisFeedError({ status: 'connecting', error: null }, 30), null);
+test('connecting stays visible while cached vessels still draw', () => {
+  assert.equal(
+    deriveAisFeedError({ status: 'connecting', error: null }, 30),
+    'connecting to feed…',
+  );
 });
 
 test('unknown status falls back to a generic reason and appends server detail', () => {
