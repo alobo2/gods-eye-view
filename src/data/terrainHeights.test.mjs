@@ -351,14 +351,55 @@ test('resolveEllipsoidalGround: an empty input array resolves to an empty array 
   assert.equal(fetchCount, 0);
 });
 
-test('resolveEllipsoidalGround: null and string heights cannot become real zeroes', async () => {
+test('resolveEllipsoidalGround: null and string heights stay unresolved, never cached as reearth', async () => {
   for (const [index, value] of [null, '', '0'].entries()) {
+    const lat = 11 + index;
+    const lon = 41;
     await withFakeFetch(
       async () => ({ ok: true, json: async () => ({ results: [{ ellipsoid: value }] }) }),
       async () => {
-        const out = await resolveEllipsoidalGround([{ lat: 11 + index, lon: 41 }]);
-        assert.equal(out[0].source, 'geoid-fallback');
+        const out = await resolveEllipsoidalGround([{ lat, lon }]);
+        assert.equal(out[0].source, 'unresolved');
+        assert.equal(out[0].ellipsoid, null);
+        assert.equal(cachedEllipsoidalGround(lat, lon), null);
       }
     );
   }
+});
+
+test('resolveEllipsoidalGround: one omitted point in a chunk does not geoid-poison its batch-mates', async () => {
+  const good = { lat: 18.001, lon: -66.001 };
+  const bad = { lat: 18.002, lon: -66.002 };
+  let fetchCount = 0;
+  await withFakeFetch(
+    async (url) => {
+      fetchCount += 1;
+      const u = new URL(String(url), 'http://internal');
+      const pts = u.searchParams.get('points').split(';');
+      const results =
+        pts.length === 1
+          ? [{ lon: bad.lon, lat: bad.lat, ellipsoid: 99 }]
+          : [
+              { lon: good.lon, lat: good.lat, ellipsoid: 42 },
+              { lon: bad.lon, lat: bad.lat, ellipsoid: null },
+            ];
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ results }),
+      };
+    },
+    async () => {
+      const first = await resolveEllipsoidalGround([good, bad]);
+      assert.equal(first[0].source, 'reearth');
+      assert.equal(first[0].ellipsoid, 42);
+      assert.equal(first[1].source, 'unresolved');
+      assert.equal(cachedEllipsoidalGround(good.lat, good.lon), 42);
+
+      const second = await resolveEllipsoidalGround([bad]);
+      assert.equal(second[0].source, 'reearth');
+      assert.equal(second[0].ellipsoid, 99);
+      assert.equal(fetchCount, 2, 'only the omitted coordinate should be re-fetched');
+    }
+  );
 });

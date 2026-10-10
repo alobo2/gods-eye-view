@@ -127,9 +127,10 @@ export function createTerrainHeights({ source, signal }) {
     // for callers who want them, but this module doesn't need them.
     for (let i = 0; i < chunk.length; i += 1) {
       const ellipsoid = body.results[i]?.ellipsoid;
-      if (!Number.isFinite(ellipsoid))
-        throw new Error(`non-finite ellipsoid height at index ${i}`);
-      out.set(chunk[i].key, ellipsoid);
+      // A single omitted slot must not fail the chunk: batch-mates with real
+      // heights still cache as reearth; omitted keys stay out of the map and
+      // retry on the next warm (round 6 — geoid-fallback here was sea-level poison).
+      if (Number.isFinite(ellipsoid)) out.set(chunk[i].key, ellipsoid);
     }
     return out;
   }
