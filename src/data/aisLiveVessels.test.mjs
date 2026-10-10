@@ -101,6 +101,29 @@ test('missing key with no rows surfaces a clean reason', () => {
   );
 });
 
+test('missing key stays visible while cached vessels remain on screen', () => {
+  assert.equal(
+    deriveAisFeedError({ status: 'missing-key', error: 'AISSTREAM_API_KEY is not set' }, 8),
+    'AISSTREAM_API_KEY not set',
+  );
+  const snapshot = classifyAisFeedSnapshot({
+    status: 'missing-key',
+    error: 'AISSTREAM_API_KEY is not set',
+    rows: [{ mmsi: 'cached', lat: 29.7, lon: -95.1 }],
+  });
+  assert.equal(snapshot.acceptedRowCount, 1);
+  assert.equal(snapshot.error, 'AISSTREAM_API_KEY not set');
+});
+
+test('unsupported feed stays visible while cached vessels remain on screen', () => {
+  assert.equal(deriveAisFeedError({ status: 'unsupported', error: null }, 3), 'live feed unsupported');
+  const snapshot = classifyAisFeedSnapshot({
+    status: 'unsupported',
+    rows: [{ mmsi: 'cached', lat: 1, lon: 2 }],
+  });
+  assert.equal(snapshot.error, 'live feed unsupported');
+});
+
 test('socket error with no rows surfaces "feed down"', () => {
   assert.equal(deriveAisFeedError({ status: 'error', error: 'AISStream websocket error' }, 0), 'feed down');
 });

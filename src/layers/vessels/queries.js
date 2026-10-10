@@ -52,6 +52,9 @@ export function createQueries({
         ? `feed silent ${silentSec}s — no AIS data`
         : 'feed silent — no AIS data';
     }
+    if (status === 'missing-key' || status === 'unsupported') {
+      return AIS_STATUS_REASON[status];
+    }
     if (status === 'error') return AIS_STATUS_REASON.error;
     if (status === 'closed') return AIS_STATUS_REASON.closed;
     const attempt = Number(payload?.reconnectAttempt);
