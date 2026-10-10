@@ -98,4 +98,6 @@ export const AIS_DEGRADED_STATUSES = new Set([
   'reconnecting',
   'down',
   'auth-failed',
+  'error',
+  'closed',
 ]);

@@ -52,6 +52,8 @@ export function createQueries({
         ? `feed silent ${silentSec}s — no AIS data`
         : 'feed silent — no AIS data';
     }
+    if (status === 'error') return AIS_STATUS_REASON.error;
+    if (status === 'closed') return AIS_STATUS_REASON.closed;
     const attempt = Number(payload?.reconnectAttempt);
     const suffix =
       Number.isFinite(attempt) && attempt >= 1 ? ` (attempt ${attempt})` : '';

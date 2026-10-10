@@ -105,8 +105,27 @@ test('socket error with no rows surfaces "feed down"', () => {
   assert.equal(deriveAisFeedError({ status: 'error', error: 'AISStream websocket error' }, 0), 'feed down');
 });
 
+test('socket error stays visible while cached vessels are still drawable', () => {
+  assert.equal(
+    deriveAisFeedError({ status: 'error', error: 'AISStream websocket error' }, 4),
+    'feed down',
+  );
+  const snapshot = classifyAisFeedSnapshot({
+    status: 'error',
+    error: 'AISStream websocket error',
+    refreshing: true,
+    rows: [{ mmsi: 'cached', lat: 29.7, lon: -95.1 }],
+  });
+  assert.equal(snapshot.acceptedRowCount, 1);
+  assert.equal(snapshot.error, 'feed down');
+});
+
 test('closed feed with no rows surfaces "feed disconnected"', () => {
   assert.equal(deriveAisFeedError({ status: 'closed', error: null }, 0), 'feed disconnected');
+});
+
+test('closed feed stays visible while cached vessels remain on screen', () => {
+  assert.equal(deriveAisFeedError({ status: 'closed', error: null }, 12), 'feed disconnected');
 });
 
 test('non-open status but rows still flowing is treated as stale, not down (null)', () => {
