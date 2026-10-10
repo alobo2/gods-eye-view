@@ -94,6 +94,16 @@ test('accepted cached rows remain drawable while transport is still connecting',
   assert.equal(snapshot.error, 'connecting to feed…');
 });
 
+test('accepted cached rows remain drawable while transport is idle', () => {
+  const snapshot = classifyAisFeedSnapshot({
+    status: 'idle',
+    refreshing: true,
+    rows: [{ mmsi: 'cached', lat: 29.7, lon: -95.1 }],
+  });
+  assert.equal(snapshot.acceptedRowCount, 1);
+  assert.equal(snapshot.error, 'feed idle');
+});
+
 test('missing key with no rows surfaces a clean reason', () => {
   assert.equal(
     deriveAisFeedError({ status: 'missing-key', error: 'AISSTREAM_API_KEY is not set' }, 0),
@@ -156,6 +166,10 @@ test('connecting stays visible while cached vessels still draw', () => {
     deriveAisFeedError({ status: 'connecting', error: null }, 30),
     'connecting to feed…',
   );
+});
+
+test('idle stays visible while cached vessels still draw', () => {
+  assert.equal(deriveAisFeedError({ status: 'idle', error: null }, 30), 'feed idle');
 });
 
 test('unknown status falls back to a generic reason and appends server detail', () => {

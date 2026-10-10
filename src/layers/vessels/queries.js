@@ -46,6 +46,7 @@ export function createQueries({
       // so the chip asks the operator to do the one thing that can.
       return 'API key rejected — check AISSTREAM_API_KEY';
     }
+    if (status === 'idle') return AIS_STATUS_REASON.idle;
     if (status === 'connecting') return AIS_STATUS_REASON.connecting;
     if (status === 'stale') {
       const silentSec = Math.round(Number(payload?.silentForMs) / 1000);

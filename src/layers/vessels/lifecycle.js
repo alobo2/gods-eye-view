@@ -76,7 +76,11 @@ export function createLifecycle({
   }
 
   function isGraceEligibleTransport(status) {
-    return AIS_HEALTHY_STATUSES.has(status) || status === 'connecting';
+    return (
+      AIS_HEALTHY_STATUSES.has(status) ||
+      status === 'idle' ||
+      status === 'connecting'
+    );
   }
 
   function isDefinitiveTransportFailure(status) {
