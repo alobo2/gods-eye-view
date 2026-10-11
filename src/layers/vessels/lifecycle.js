@@ -76,7 +76,11 @@ export function createLifecycle({
   }
 
   function isGraceEligibleTransport(status) {
-    return AIS_HEALTHY_STATUSES.has(status) || status === 'connecting';
+    return (
+      AIS_HEALTHY_STATUSES.has(status) ||
+      status === 'idle' ||
+      status === 'connecting'
+    );
   }
 
   function isDefinitiveTransportFailure(status) {
@@ -87,6 +91,9 @@ export function createLifecycle({
     settleFirstConnectPhase('unavailable');
     state.feed.error = reason || 'AIS live load failed';
     state.feed.stale = state.feed.count > 0;
+    // A prior incomplete snapshot must not keep reporting partial once the feed
+    // is definitively unavailable — voice/tools read raw stats, not layerFeedState.
+    state.feed.partial = false;
   }
 
   function resetState() {

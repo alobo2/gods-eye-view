@@ -48,6 +48,7 @@ export function createIngestion({
         complete: snapshot.complete,
         rawRowCount: snapshot.rawRowCount,
         reason: snapshot.reason,
+        error: snapshot.transportError ?? null,
         status: snapshot.transportStatus,
         lastMessageAt: snapshot.lastMessageAt,
         nextAttemptAt: snapshot.nextAttemptAt,
@@ -65,6 +66,13 @@ export function createIngestion({
         error?.name !== 'AbortError'
       ) {
         markUnavailable(error?.message || 'AIS live load failed');
+        feed.transportStatus =
+          typeof error?.aisTransportStatus === 'string'
+            ? error.aisTransportStatus
+            : 'error';
+        if (Number.isFinite(error?.aisNextAttemptAt)) {
+          feed.nextAttemptAt = error.aisNextAttemptAt;
+        }
         console.warn('[Data:ais-live-vessels]', feed.error, error);
       }
     } finally {

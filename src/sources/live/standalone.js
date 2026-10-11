@@ -190,6 +190,12 @@ export function createAisStreamSource({
           error: 'feed down',
           closed: 'feed disconnected',
         };
+        error.aisTransportStatus =
+          typeof payload?.status === 'string' ? payload.status : 'error';
+        const nextAttemptAt = Number(payload?.nextAttemptAt);
+        if (Number.isFinite(nextAttemptAt) && nextAttemptAt > 0) {
+          error.aisNextAttemptAt = nextAttemptAt;
+        }
         error.message = reasons[payload?.status] || error.message;
         throw error;
       }

@@ -46,12 +46,19 @@ export function createQueries({
       // so the chip asks the operator to do the one thing that can.
       return 'API key rejected — check AISSTREAM_API_KEY';
     }
+    if (status === 'idle') return AIS_STATUS_REASON.idle;
+    if (status === 'connecting') return AIS_STATUS_REASON.connecting;
     if (status === 'stale') {
       const silentSec = Math.round(Number(payload?.silentForMs) / 1000);
       return Number.isFinite(silentSec) && silentSec > 0
         ? `feed silent ${silentSec}s — no AIS data`
         : 'feed silent — no AIS data';
     }
+    if (status === 'missing-key' || status === 'unsupported') {
+      return AIS_STATUS_REASON[status];
+    }
+    if (status === 'error') return AIS_STATUS_REASON.error;
+    if (status === 'closed') return AIS_STATUS_REASON.closed;
     const attempt = Number(payload?.reconnectAttempt);
     const suffix =
       Number.isFinite(attempt) && attempt >= 1 ? ` (attempt ${attempt})` : '';
@@ -79,7 +86,19 @@ export function createQueries({
     if (status && AIS_DEGRADED_STATUSES.has(status)) {
       return describeDegradedAisFeed(status, payload);
     }
-    if (acceptedRowCount > 0) return null; // accepted rows may be stale while reconnecting, but remain usable
+    // Cached rows must not silence an unknown or non-healthy transport — only
+    // live/open (or a legacy payload with no status) reads as healthy.
+    if (
+      acceptedRowCount > 0 &&
+      (!status || AIS_HEALTHY_STATUSES.has(status))
+    ) {
+      const orphanDetail =
+        !status &&
+        typeof payload?.error === 'string' &&
+        payload.error.trim();
+      if (!orphanDetail) return null;
+      return orphanDetail;
+    }
     if (AIS_HEALTHY_STATUSES.has(status)) {
       return payload?.lastMessageAt
         ? 'awaiting usable AIS positions…'

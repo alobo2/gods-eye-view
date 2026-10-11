@@ -94,8 +94,14 @@ export const AIS_HEALTHY_STATUSES = new Set(['live', 'open']);
  */
 
 export const AIS_DEGRADED_STATUSES = new Set([
+  'idle',
+  'connecting',
   'stale',
   'reconnecting',
   'down',
   'auth-failed',
+  'missing-key',
+  'unsupported',
+  'error',
+  'closed',
 ]);

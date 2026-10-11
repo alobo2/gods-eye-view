@@ -33,6 +33,7 @@ import { registerEntityContext, selectEntityContext } from './contextStore.js';
 import { WORLD_FOCUS_REQUEST_EVENT } from '../worldFocus.js';
 import { ensureGeoidReady, geoidHeight } from './geoid.js';
 import { registerPickOwner, unregisterPickOwner } from './pickRegistry.js';
+import { vesselSnapshot } from '../sources/live/vessels.js';
 import { applyVesselOverlayPolicy } from './vesselLabels.js';
 import { layerFeedState } from './manager.js';
 
@@ -84,14 +85,24 @@ test('raw rows that all fail normalization do not satisfy AIS product health', (
   assert.equal(snapshot.error, 'awaiting usable AIS positions…');
 });
 
-test('accepted cached rows remain usable while transport reconnects', () => {
+test('accepted cached rows remain drawable while transport is still connecting', () => {
   const snapshot = classifyAisFeedSnapshot({
     status: 'connecting',
     refreshing: true,
     rows: [{ mmsi: 'cached', lat: 29.7, lon: -95.1 }],
   });
   assert.equal(snapshot.acceptedRowCount, 1);
-  assert.equal(snapshot.error, null);
+  assert.equal(snapshot.error, 'connecting to feed…');
+});
+
+test('accepted cached rows remain drawable while transport is idle', () => {
+  const snapshot = classifyAisFeedSnapshot({
+    status: 'idle',
+    refreshing: true,
+    rows: [{ mmsi: 'cached', lat: 29.7, lon: -95.1 }],
+  });
+  assert.equal(snapshot.acceptedRowCount, 1);
+  assert.equal(snapshot.error, 'feed idle');
 });
 
 test('missing key with no rows surfaces a clean reason', () => {
@@ -101,17 +112,65 @@ test('missing key with no rows surfaces a clean reason', () => {
   );
 });
 
+test('missing key stays visible while cached vessels remain on screen', () => {
+  assert.equal(
+    deriveAisFeedError({ status: 'missing-key', error: 'AISSTREAM_API_KEY is not set' }, 8),
+    'AISSTREAM_API_KEY not set',
+  );
+  const snapshot = classifyAisFeedSnapshot({
+    status: 'missing-key',
+    error: 'AISSTREAM_API_KEY is not set',
+    rows: [{ mmsi: 'cached', lat: 29.7, lon: -95.1 }],
+  });
+  assert.equal(snapshot.acceptedRowCount, 1);
+  assert.equal(snapshot.error, 'AISSTREAM_API_KEY not set');
+});
+
+test('unsupported feed stays visible while cached vessels remain on screen', () => {
+  assert.equal(deriveAisFeedError({ status: 'unsupported', error: null }, 3), 'live feed unsupported');
+  const snapshot = classifyAisFeedSnapshot({
+    status: 'unsupported',
+    rows: [{ mmsi: 'cached', lat: 1, lon: 2 }],
+  });
+  assert.equal(snapshot.error, 'live feed unsupported');
+});
+
 test('socket error with no rows surfaces "feed down"', () => {
   assert.equal(deriveAisFeedError({ status: 'error', error: 'AISStream websocket error' }, 0), 'feed down');
+});
+
+test('socket error stays visible while cached vessels are still drawable', () => {
+  assert.equal(
+    deriveAisFeedError({ status: 'error', error: 'AISStream websocket error' }, 4),
+    'feed down',
+  );
+  const snapshot = classifyAisFeedSnapshot({
+    status: 'error',
+    error: 'AISStream websocket error',
+    refreshing: true,
+    rows: [{ mmsi: 'cached', lat: 29.7, lon: -95.1 }],
+  });
+  assert.equal(snapshot.acceptedRowCount, 1);
+  assert.equal(snapshot.error, 'feed down');
 });
 
 test('closed feed with no rows surfaces "feed disconnected"', () => {
   assert.equal(deriveAisFeedError({ status: 'closed', error: null }, 0), 'feed disconnected');
 });
 
-test('non-open status but rows still flowing is treated as stale, not down (null)', () => {
-  // e.g. reconnecting/refreshing while a cached buffer still serves rows.
-  assert.equal(deriveAisFeedError({ status: 'connecting', error: null }, 30), null);
+test('closed feed stays visible while cached vessels remain on screen', () => {
+  assert.equal(deriveAisFeedError({ status: 'closed', error: null }, 12), 'feed disconnected');
+});
+
+test('connecting stays visible while cached vessels still draw', () => {
+  assert.equal(
+    deriveAisFeedError({ status: 'connecting', error: null }, 30),
+    'connecting to feed…',
+  );
+});
+
+test('idle stays visible while cached vessels still draw', () => {
+  assert.equal(deriveAisFeedError({ status: 'idle', error: null }, 30), 'feed idle');
 });
 
 test('unknown status falls back to a generic reason and appends server detail', () => {
@@ -121,9 +180,68 @@ test('unknown status falls back to a generic reason and appends server detail', 
   );
 });
 
+test('unknown status stays visible while cached vessels still draw', () => {
+  assert.equal(
+    deriveAisFeedError({ status: 'weird-state', error: 'something specific' }, 12),
+    'feed unavailable (something specific)',
+  );
+  const snapshot = classifyAisFeedSnapshot({
+    status: 'weird-state',
+    error: 'something specific',
+    rows: [{ mmsi: '1', lat: 1, lon: 1 }],
+  });
+  assert.match(snapshot.error, /feed unavailable/);
+});
+
 test('missing status treated as healthy (older/other payload shapes) (null)', () => {
   assert.equal(deriveAisFeedError({ error: 'ignored' }, 0), null);
   assert.equal(deriveAisFeedError(null, 0), null);
+});
+
+test('status-less server error stays visible while cached vessels still draw', () => {
+  assert.equal(
+    deriveAisFeedError({ error: 'feed warming cache only' }, 12),
+    'feed warming cache only',
+  );
+  const snapshot = classifyAisFeedSnapshot({
+    error: 'feed warming cache only',
+    rows: [{ mmsi: '1', lat: 1, lon: 1 }],
+  });
+  assert.equal(snapshot.error, 'feed warming cache only');
+});
+
+test('vesselSnapshot carries transportError through the live source seam', () => {
+  const snap = vesselSnapshot({
+    rows: [{ mmsi: '123456789', lat: 1, lon: 2 }],
+    status: 'stale',
+    error: '  quiet upstream  ',
+  });
+  assert.equal(snap.transportError, 'quiet upstream');
+});
+
+test('ingestion forwards transportError into feed classification', () => {
+  const record = { mmsi: '123456789', lat: 51.9, lon: 4.0 };
+  _setVesselStateForTest({
+    viewer: {},
+    records: [record],
+    loaded: true,
+    count: 1,
+  });
+  try {
+    _applyAisFeedSnapshotForTest(
+      {},
+      {
+        rows: [record],
+        error: 'feed warming cache only',
+        complete: true,
+      },
+    );
+    const feed = _getVesselFeedStateForTest();
+    assert.equal(feed.error, 'feed warming cache only');
+    assert.equal(feed.count, 1);
+  } finally {
+    _setVesselStateForTest({ enabled: false });
+  }
 });
 
 // --- watchdog statuses -----------------------------------------------------
@@ -501,6 +619,79 @@ function deferredFetchResponse() {
 function jsonResponse(payload) {
   return { ok: true, status: 200, json: async () => payload };
 }
+
+test('network rejection replaces stale transport status from the last live poll', async () => {
+  const hadWindow = Object.hasOwn(globalThis, 'window');
+  const priorWindow = globalThis.window;
+  const priorFetch = globalThis.fetch;
+  const priorWarn = console.warn;
+  const record = makeRecord();
+  globalThis.window = { location: { origin: 'http://localhost:4173' } };
+  globalThis.fetch = async () => {
+    throw new TypeError('fetch failed');
+  };
+  console.warn = () => {};
+  _setVesselStateForTest({
+    viewer: {},
+    records: [record],
+    loaded: true,
+    lastUpdate: 500,
+    transportStatus: 'live',
+    count: 1,
+  });
+  try {
+    await _loadLivePositionsForTest({});
+    const feed = _getVesselFeedStateForTest();
+    assert.equal(feed.count, 1);
+    assert.equal(feed.transportStatus, 'error');
+    assert.match(feed.error, /network error/i);
+  } finally {
+    globalThis.fetch = priorFetch;
+    console.warn = priorWarn;
+    if (hadWindow) globalThis.window = priorWindow;
+    else delete globalThis.window;
+    _setVesselStateForTest({ enabled: false });
+  }
+});
+
+test('HTTP rejection replaces stale transport status from the last live poll', async () => {
+  const hadWindow = Object.hasOwn(globalThis, 'window');
+  const priorWindow = globalThis.window;
+  const priorFetch = globalThis.fetch;
+  const priorWarn = console.warn;
+  const record = makeRecord();
+  globalThis.window = { location: { origin: 'http://localhost:4173' } };
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 503,
+    json: async () => ({
+      status: 'missing-key',
+      error: 'AISSTREAM_API_KEY is not set',
+    }),
+  });
+  console.warn = () => {};
+  _setVesselStateForTest({
+    viewer: {},
+    records: [record],
+    loaded: true,
+    lastUpdate: 500,
+    transportStatus: 'live',
+    count: 1,
+  });
+  try {
+    await _loadLivePositionsForTest({});
+    const feed = _getVesselFeedStateForTest();
+    assert.equal(feed.count, 1);
+    assert.equal(feed.transportStatus, 'missing-key');
+    assert.equal(feed.error, 'AISSTREAM_API_KEY not set');
+  } finally {
+    globalThis.fetch = priorFetch;
+    console.warn = priorWarn;
+    if (hadWindow) globalThis.window = priorWindow;
+    else delete globalThis.window;
+    _setVesselStateForTest({ enabled: false });
+  }
+});
 
 test('HTTP rejection ends first-connect grace without waiting for its deadline', async () => {
   const hadWindow = Object.hasOwn(globalThis, 'window');

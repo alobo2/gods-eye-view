@@ -113,6 +113,21 @@ test('missing vessel source fails before mutating the viewer', () => {
   layer.setSource({ getSnapshot: noop });
 });
 
+test('definitive AIS outage clears a stale partial flag from the prior snapshot', async () => {
+  let current = snapshot([observation('111')], { complete: false, rawRowCount: 2 });
+  const { layer } = setup({
+    async getSnapshot() {
+      return current;
+    },
+  });
+  await layer.update();
+  assert.equal(layer.getStats().partial, true);
+  current = snapshot([], { complete: false, transportStatus: 'error' });
+  await layer.update();
+  assert.equal(layer.getStats().partial, false);
+  assert.ok(layer.getStats().error);
+});
+
 test('partial observations retain missing contacts only until their receipt deadline', async () => {
   let current = snapshot([observation('111'), observation('222')]);
   const { layer, advance } = setup({

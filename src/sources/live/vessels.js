@@ -75,6 +75,10 @@ export function vesselSnapshot(
     silentForMs: finite(payload?.silentForMs),
     reconnectAttempt: finite(payload?.reconnectAttempt),
     rawRowCount: rows.length,
+    transportError:
+      typeof payload?.error === 'string' && payload.error.trim()
+        ? payload.error.trim()
+        : null,
   };
 }
 

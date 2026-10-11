@@ -41,6 +41,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { AIS_DEGRADED_STATUSES } from '../src/layers/vessels/policy.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
@@ -264,6 +265,105 @@ function trafficFlowInconclusive(stats) {
     && !(s.tilesFetched > 0)
     && Boolean(s.loading || s.loadingLabel)
     && !s.error;
+}
+
+/**
+ * AIS transports that must not read as a live feed in B8/C8 when keyed.
+ * `auth-failed` keeps its own branch (terminal product failure, not ENV).
+ */
+const AIS_C8_DEGRADED_TRANSPORTS = new Set(
+  [...AIS_DEGRADED_STATUSES].filter((status) => status !== 'auth-failed'),
+);
+
+/**
+ * Keyed-branch verdict for C8 (vessels layer chip vs transportStatus).
+ * @param {{ transportStatus: string|null|undefined, count: number, chipText: string, error?: string|null, retryInSec?: number, lastMessageAt?: unknown }} input
+ */
+function classifyAisVesselC8Keyed(input) {
+  const {
+    transportStatus: transport,
+    count,
+    chipText,
+    error = null,
+    retryInSec,
+    lastMessageAt,
+  } = input;
+  const live = transport === 'live' || transport === 'open';
+  if (live && count > 0) {
+    return /^ON$/i.test(chipText)
+      ? pass(`${count} vessels live: chip="ON", transport=${transport}, lastMessage=${lastMessageAt || 'n/a'}`)
+      : fail(`transport=${transport} with ${count} vessels, but the chip reads "${chipText}" — a live feed must present as ON`);
+  }
+  if (transport === 'auth-failed') {
+    const surfaced = /UNAVAILABLE/i.test(chipText) && /key rejected/i.test(String(error || ''));
+    return surfaced
+      ? fail(`AISStream rejected the key — surfaced correctly (chip="${chipText}", error="${error}", retryInSec=${retryInSec}) but a rejected key is a product-blocking failure, not an environment condition`)
+      : fail(`AISStream rejected the key and the UI did not say so: chip="${chipText}", error="${String(error || 'none')}"`);
+  }
+  if (transport && AIS_C8_DEGRADED_TRANSPORTS.has(transport)) {
+    const expected = count > 0 ? /STALE|DEGRADED/i : /UNAVAILABLE|DEGRADED/i;
+    return expected.test(chipText)
+      ? skip(`feed is ${transport}${count > 0 ? ` with ${count} CACHED vessels` : ''} and the UI says so (chip="${chipText}", error="${String(error || '').slice(0, 60)}", retryInSec=${retryInSec}) — honest degradation, not a live feed`, 'ENV')
+      : fail(`feed is ${transport} with ${count} vessels but the chip reads "${chipText}" — a degraded feed that presents as healthy is exactly the invisible outage this check exists for`);
+  }
+  if (count > 0 && !transport && error) {
+    const expected = /STALE|DEGRADED/i;
+    return expected.test(chipText)
+      ? skip(`feed has no transport status with ${count} CACHED vessels and the UI says so (chip="${chipText}", error="${String(error).slice(0, 60)}") — status-less degradation, not a live feed`, 'ENV')
+      : fail(`feed has no transport status with ${count} vessels but the chip reads "${chipText}" — a status-less degraded feed that presents as healthy is exactly the invisible outage this check exists for`);
+  }
+  if (count > 0) {
+    return fail(`${count} vessels with transport="${transport}" — neither live nor a recognised degraded state, so this cannot be called a live feed (chip="${chipText}")`);
+  }
+  return /UNAVAILABLE|LOADING|DEGRADED|STALE/i.test(chipText)
+    ? skip(`keyed but 0 vessels and the UI says so (chip="${chipText}", transport=${transport}, error="${String(error || '').slice(0, 60)}") — AISStream connects open-but-silent upstream`, 'ENV')
+    : fail(`keyed, 0 vessels, and the chip claims "${chipText}" — the layer is empty without surfacing it`);
+}
+
+/**
+ * B8 verdict for keyed /api/ais-live (server-side liveness probe).
+ * @param {{ ok: boolean, status?: string|null, rows: number, httpStatus?: number, json?: object }} input
+ */
+function classifyAisFeedB8({ ok, status, rows, httpStatus = 0, json = {} }) {
+  if (!ok) {
+    return fail(`HTTP ${httpStatus} status=${status}`);
+  }
+  const healthy = status === 'live' || status === 'open';
+  if (healthy && rows > 0) {
+    return pass(
+      `${rows} vessels, status=${status}, newest=${json.newestPositionAt || 'n/a'}, silentFor=${json.silentForMs ?? 'n/a'}ms`,
+    );
+  }
+  if (status === 'auth-failed') {
+    return fail(
+      `AISStream rejected the configured key (status=auth-failed, rows=${rows}) — retry is terminal (retryInSec 0)`,
+    );
+  }
+  if (healthy && rows === 0) {
+    return skip(
+      'status=live but 0 rows — AISStream connects open-but-silent upstream (their #23/#15); recheck when it wakes',
+      'ENV',
+    );
+  }
+  if (status && AIS_C8_DEGRADED_TRANSPORTS.has(status)) {
+    return skip(
+      `feed is ${status}${rows > 0 ? ` while still serving ${rows} CACHED rows` : ''} (attempt=${json.reconnectAttempt ?? 'n/a'}, nextAttemptAt=${json.nextAttemptAt ?? 'n/a'}, silentFor=${json.silentForMs ?? 'n/a'}ms) — surfaced honestly, but this is not a live feed`,
+      'ENV',
+    );
+  }
+  const payloadError =
+    typeof json.error === 'string' && json.error.trim()
+      ? json.error.trim()
+      : null;
+  if (!status && rows > 0 && payloadError) {
+    return skip(
+      `feed has no status while still serving ${rows} CACHED rows (error="${payloadError.slice(0, 60)}") — status-less degradation, not a live feed`,
+      'ENV',
+    );
+  }
+  return fail(
+    `unexpected AIS feed status "${status}" with ${rows} rows — neither live/open nor a recognised degraded transport`,
+  );
 }
 
 /** Positively-identified "the target is not there at all" (never an HTTP error). */
@@ -831,30 +931,13 @@ check({
     const r = await jget('/api/ais-live', { timeoutMs: 40000 });
     const rows = r.json?.rows?.length || 0;
     const status = r.json?.status;
-    if (!r.ok) return fail(`HTTP ${r.status} status=${status}`);
-    // Rows alone are NOT liveness. The watchdog keeps serving cached vessels
-    // through stale/reconnecting/down — "the cached vessels on screen are
-    // exactly what makes an outage invisible" (src/data/aisLiveVessels.js:183).
-    // A live claim therefore needs status === 'live' AND rows.
-    // ('open' is the pre-watchdog spelling: still accepted by the client, never
-    // emitted by this server — aisWatchdog.js:72.)
-    const healthy = status === 'live' || status === 'open';
-    if (healthy && rows > 0) {
-      return pass(`${rows} vessels, status=${status}, newest=${r.json?.newestPositionAt || 'n/a'}, silentFor=${r.json?.silentForMs ?? 'n/a'}ms`);
-    }
-    if (status === 'auth-failed') {
-      // A rejected key is terminal and is the product's problem to report.
-      return fail(`AISStream rejected the configured key (status=auth-failed, rows=${rows}) — retry is terminal (retryInSec 0)`);
-    }
-    if (healthy && rows === 0) {
-      return skip(`status=live but 0 rows — AISStream connects open-but-silent upstream (their #23/#15); recheck when it wakes`, 'ENV');
-    }
-    if (['stale', 'reconnecting', 'down', 'connecting'].includes(status)) {
-      // Transient/degraded is ENV only because the payload SAYS so — the
-      // honesty is the evidence. rows>0 here means cached, not live.
-      return skip(`feed is ${status}${rows > 0 ? ` while still serving ${rows} CACHED rows` : ''} (attempt=${r.json?.reconnectAttempt ?? 'n/a'}, nextAttemptAt=${r.json?.nextAttemptAt ?? 'n/a'}, silentFor=${r.json?.silentForMs ?? 'n/a'}ms) — surfaced honestly, but this is not a live feed`, 'ENV');
-    }
-    return fail(`unexpected AIS feed status "${status}" with ${rows} rows — not one of live/stale/reconnecting/down/auth-failed/connecting`);
+    return classifyAisFeedB8({
+      ok: r.ok,
+      status,
+      rows,
+      httpStatus: r.status,
+      json: r.json || {},
+    });
   },
 });
 
@@ -1544,39 +1627,14 @@ async function runBrowserGroup(record) {
       if (s.count > 0) return fail(`chip says UNAVAILABLE but the layer reports ${s.count} vessels`);
       return pass(`keyless and honest: chip="${chip.text}" feedState=unavailable, stats.status=${s.status}, error="${String(s.error || '').slice(0, 40)}", count=0`);
     }
-    // getStats().status is ONLY ever 'unavailable' or undefined; the feed state
-    // rides on transportStatus (src/data/aisLiveVessels.js:646-668). And cached
-    // rows survive a degraded feed on purpose, so count > 0 is not liveness.
-    const transport = s.transportStatus;
-    const live = transport === 'live' || transport === 'open';
-    if (live && s.count > 0) {
-      // Chip vocabulary: ON / LOADING / DEGRADED / STALE / FALLBACK /
-      // UNAVAILABLE (src/data/manager.js:12-19). A live feed with rows reads ON.
-      return /^ON$/i.test(chip.text)
-        ? pass(`${s.count} vessels live: chip="ON", transport=${transport}, lastMessage=${s.lastMessageAt || 'n/a'}`)
-        : fail(`transport=${transport} with ${s.count} vessels, but the chip reads "${chip.text}" — a live feed must present as ON`);
-    }
-    if (transport === 'auth-failed') {
-      const surfaced = /UNAVAILABLE/i.test(chip.text) && /key rejected/i.test(String(s.error || ''));
-      return surfaced
-        ? fail(`AISStream rejected the key — surfaced correctly (chip="${chip.text}", error="${s.error}", retryInSec=${s.retryInSec}) but a rejected key is a product-blocking failure, not an environment condition`)
-        : fail(`AISStream rejected the key and the UI did not say so: chip="${chip.text}", error="${String(s.error || 'none')}"`);
-    }
-    if (['stale', 'reconnecting', 'down'].includes(transport)) {
-      // Degraded is ENV only when it is SURFACED. Cached rows must read STALE;
-      // no usable rows must read UNAVAILABLE.
-      const expected = s.count > 0 ? /STALE|DEGRADED/i : /UNAVAILABLE|DEGRADED/i;
-      return expected.test(chip.text)
-        ? skip(`feed is ${transport}${s.count > 0 ? ` with ${s.count} CACHED vessels` : ''} and the UI says so (chip="${chip.text}", error="${String(s.error || '').slice(0, 60)}", retryInSec=${s.retryInSec}) — honest degradation, not a live feed`, 'ENV')
-        : fail(`feed is ${transport} with ${s.count} vessels but the chip reads "${chip.text}" — a degraded feed that presents as healthy is exactly the invisible outage this check exists for`);
-    }
-    if (s.count > 0) {
-      return fail(`${s.count} vessels with transport="${transport}" — neither live nor a recognised degraded state, so this cannot be called a live feed (chip="${chip.text}")`);
-    }
-    // Keyed but empty: honest only if the UI says so.
-    return /UNAVAILABLE|LOADING|DEGRADED|STALE/i.test(chip.text)
-      ? skip(`keyed but 0 vessels and the UI says so (chip="${chip.text}", transport=${transport}, error="${String(s.error || '').slice(0, 60)}") — AISStream connects open-but-silent upstream`, 'ENV')
-      : fail(`keyed, 0 vessels, and the chip claims "${chip.text}" — the layer is empty without surfacing it`);
+    return classifyAisVesselC8Keyed({
+      transportStatus: s.transportStatus,
+      count: s.count,
+      chipText: chip.text,
+      error: s.error,
+      retryInSec: s.retryInSec,
+      lastMessageAt: s.lastMessageAt,
+    });
   });
 
   await step('C9', async () => {
@@ -2329,7 +2387,8 @@ if (import.meta.url === invokedPath) {
 export {
   PASS, PASS_SKIPS, FAIL, CRASH, SKIP, OUTCOMES,
   normalizeVerdict, classifyNoScoreboard, readResultLine, readCockpit, satisfiesEngines,
-  isCalibratedAllocationRuntime, trafficFlowInconclusive,
+  isCalibratedAllocationRuntime, trafficFlowInconclusive, classifyAisVesselC8Keyed,
+  classifyAisFeedB8, AIS_C8_DEGRADED_TRANSPORTS,
   soleVerdict, RESULT_RE, COCKPIT_RE, FLOOR_RE,
   readFloorVerdict, keyGuard, applyKnownConditions, requiredCreditFor,
   CREDIT_EXPECTATIONS, CREDIT_EXEMPT_LAYERS,
